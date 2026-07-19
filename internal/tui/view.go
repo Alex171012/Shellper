@@ -19,6 +19,18 @@ func (m model) View() string {
 
 	body := m.messageVP.View()
 
+	if m.messageVP.TotalLineCount() > m.messageVP.VisibleLineCount() {
+		atTop := m.messageVP.YOffset <= 0
+		atBottom := m.messageVP.YOffset+m.messageVP.VisibleLineCount() >= m.messageVP.TotalLineCount()
+
+		if !atTop {
+			body += "\n" + dimStyle.Padding(0, 2).Render("▲ PgUp")
+		}
+		if !atBottom {
+			body += "\n" + dimStyle.Padding(0, 2).Render("▼ PgDn")
+		}
+	}
+
 	if m.status == statusConfirming {
 		body += "\n" + m.renderConfirmPanel()
 	}
@@ -31,75 +43,127 @@ func (m model) View() string {
 		body += "\n" + m.renderOutputPanel()
 	}
 
-	components := []string{header, body, input}
-	return lipgloss.JoinVertical(lipgloss.Left, components...)
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, input)
 }
 
 func (m model) renderHeader() string {
-	modeStr := modeStyle.Render(strings.ToUpper(" " + m.modeName() + " "))
-	statusStr := statusStyle.Render(" " + m.statusText() + " ")
-	personaStr := headerInfoStyle.Render(" " + m.persona + " ")
+	mode := modeTag.Render(strings.ToUpper(" " + m.modeName() + " "))
+	status := statusTag.Render(" " + m.statusText() + " ")
+	persona := headerInfo.Render(" " + m.persona + " ")
 
-	right := lipgloss.JoinHorizontal(lipgloss.Left, statusStr, personaStr)
-
-	header := lipgloss.JoinHorizontal(lipgloss.Center,
-		" Shellper ", modeStr, right,
-	)
-	header = headerStyle.Render(header)
-	header = lipgloss.NewStyle().Width(m.width).Render(header)
-
-	return header
+	right := lipgloss.JoinHorizontal(lipgloss.Left, status, persona)
+	line := lipgloss.JoinHorizontal(lipgloss.Center, " Shellper ", mode, right)
+	return headerStyle.Width(m.width).Render(line)
 }
 
 func (m model) renderMessages() string {
 	if len(m.messages) == 0 {
-		return lipgloss.NewStyle().Padding(2, 2).
-			Foreground(lipgloss.Color("#6272A4")).
-			Render(`Welcome to Shellper!
-
-  Type a message and press Enter.
-  /help for commands.
-
-Modes:
-  ask      Generate and run scripts
-  explain  Scripts with explanations
-  qa       Linux Q&A (no execution)`)
+		return welcomeStyle.Render(
+			"Welcome to Shellper\n\n" +
+				"Type a message and press Enter.\n" +
+				"Use /help to see available commands.\n\n" +
+				"  " + modeTag.Render("[ask]") + "  Generate and run scripts\n" +
+				"  " + modeTag.Render("[explain]") + "  Scripts with explanations\n" +
+				"  " + modeTag.Render("[qa]") + "  Linux Q&A (no execution)",
+		)
 	}
 
 	var b strings.Builder
-	for _, msg := range m.messages {
-		var roleColor string
+	msgCount := len(m.messages)
+
+	for i, msg := range m.messages {
+		label := m.messageLabel(msg)
+		ts := timestampStyle(msg.time.Format("15:04"))
+
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Left, label, " ", ts) + "\n")
+
 		switch msg.role {
-		case "user":
-			roleColor = "#50FA7B"
 		case "assistant":
-			roleColor = "#BD93F9"
-		case "system":
-			roleColor = "#6272A4"
+			b.WriteString(m.renderAssistantContent(msg.content) + "\n")
 		case "error":
-			roleColor = "#FF5555"
+			b.WriteString(errorStyle.Render(msg.content) + "\n")
+		default:
+			b.WriteString(msg.content + "\n")
 		}
 
-		author := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(roleColor)).Render(msg.role + ":")
-		b.WriteString(author + "\n")
+		if msg.script != "" && i < msgCount-1 {
+			b.WriteString("  " + scriptLabel.Render("Script:") + "\n")
+			b.WriteString(highlightShell(msg.script) + "\n")
+		}
 
-		if msg.role == "assistant" && strings.Contains(msg.content, "```") {
-			b.WriteString(messageContentStyle.Render(msg.content) + "\n")
-		} else if msg.role == "assistant" {
-			rendered := renderMarkdown(msg.content)
-			b.WriteString(messageContentStyle.Render(rendered) + "\n")
-		} else {
-			b.WriteString(messageContentStyle.Render(msg.content) + "\n")
+		if msg.output != "" && i < msgCount-1 {
+			b.WriteString("  " + outputLabel.Render("Output:") + "\n")
+			b.WriteString(msg.output + "\n")
 		}
 
 		if msg.exitCode != 0 {
-			b.WriteString(errorStyle.Render(fmt.Sprintf("exit code: %d\n", msg.exitCode)))
+			b.WriteString(errorStyle.Render(fmt.Sprintf("  exit code: %d", msg.exitCode)) + "\n")
 		}
 
 		b.WriteString("\n")
 	}
 
 	return b.String()
+}
+
+func (m model) messageLabel(msg messageEntry) string {
+	switch msg.role {
+	case "user":
+		return userLabel("You")
+	case "assistant":
+		return assistantLabel("Shellper")
+	case "system":
+		return systemLabel("System")
+	case "error":
+		return errorLabel("Error")
+	}
+	return msg.role
+}
+
+func (m model) renderAssistantContent(content string) string {
+	var result strings.Builder
+	lines := strings.Split(content, "\n")
+	inCodeBlock := false
+	var codeBuf strings.Builder
+
+	flushCode := func() {
+		if codeBuf.Len() > 0 {
+			highlighted := highlightShell(codeBuf.String())
+			result.WriteString(codeBlockStyle.Render(highlighted))
+			result.WriteString("\n")
+			codeBuf.Reset()
+		}
+	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			if inCodeBlock {
+				flushCode()
+				inCodeBlock = false
+			} else {
+				flushCode()
+				inCodeBlock = true
+			}
+			continue
+		}
+		if inCodeBlock {
+			if codeBuf.Len() > 0 {
+				codeBuf.WriteString("\n")
+			}
+			codeBuf.WriteString(line)
+		} else {
+			result.WriteString(line + "\n")
+		}
+	}
+
+	if inCodeBlock {
+		flushCode()
+	}
+
+	out := result.String()
+	out = renderMarkdown(out)
+	return out
 }
 
 func (m model) renderConfirmPanel() string {
@@ -110,6 +174,7 @@ func (m model) renderConfirmPanel() string {
 	hasSudo := strings.Contains(m.script, "sudo ")
 	hasRm := strings.Contains(m.script, "rm ")
 	hasChmod := strings.Contains(m.script, "chmod ")
+	hasRedirect := strings.Contains(m.script, "> ") || strings.Contains(m.script, ">> ")
 
 	var warnings []string
 	if hasSudo {
@@ -119,60 +184,61 @@ func (m model) renderConfirmPanel() string {
 		warnings = append(warnings, "⚠ Uses rm — files will be deleted")
 	}
 	if hasChmod {
-		warnings = append(warnings, "⚠ Uses chmod — file permissions will change")
+		warnings = append(warnings, "⚠ Uses chmod — file permissions change")
+	}
+	if hasRedirect {
+		warnings = append(warnings, "⚠ Uses output redirection — files may be overwritten")
 	}
 
 	highlighted := highlightShell(m.script)
 
 	var b strings.Builder
-	b.WriteString(scriptLabelStyle.Render("═══ Script Preview ═══"))
-	b.WriteString("\n")
-	b.WriteString(lipgloss.NewStyle().Padding(0, 1).Render(highlighted))
-	b.WriteString("\n")
+	b.WriteString(scriptLabel.Render("═══ Confirm Script ═══") + "\n")
+
+	b.WriteString(lipgloss.NewStyle().Padding(0, 1).Margin(0, 1).Render(highlighted) + "\n")
 
 	if len(warnings) > 0 {
-		b.WriteString(warningStyle.Render("─── Safety Warnings ───"))
-		b.WriteString("\n")
+		b.WriteString(warningStyle.Render("─── Warnings ───") + "\n")
 		for _, w := range warnings {
 			b.WriteString("  " + w + "\n")
 		}
 		b.WriteString("\n")
 	}
 
-	border := panelBorderStyle.
-		Width(m.width - 4).
-		Render(b.String() + warningStyle.Render("  Run? (y/N)  "))
+	b.WriteString(warningStyle.Render("  Run? (y/N)"))
 
-	return border
+	width := m.width - 4
+	if width < 40 {
+		width = 40
+	}
+
+	return panelBorder.Width(width).Render(b.String())
 }
 
 func (m model) renderInput() string {
-	modeTag := modeStyle.Render("[" + m.modeName() + "]")
+	tag := modeTag.Render("[" + m.modeName() + "]")
 
-	var prompt string
+	switch m.status {
+	case statusGenerating:
+		return inputStyle.Width(m.width - 2).Render(
+			tag + "  " + statusTag.Render("Generating…"),
+		)
+	case statusExecuting:
+		return inputStyle.Width(m.width - 2).Render(
+			tag + "  " + statusTag.Render("Executing…"),
+		)
+	case statusConfirming:
+		return inputStyle.Width(m.width - 2).Render(
+			tag + "  " + warningStyle.Render("Confirm above (y/N)"),
+		)
+	}
+
+	prompt := m.input
 	if strings.HasPrefix(m.input, "/") {
 		prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB86C")).Render(m.input)
-	} else {
-		prompt = m.input
 	}
 
-	var suffix string
-	if m.status == statusGenerating {
-		suffix = statusStyle.Render(" Generating... ")
-	} else if m.status == statusExecuting {
-		suffix = statusStyle.Render(" Executing... ")
-	} else if m.status == statusConfirming {
-		suffix = ""
-	} else {
-		suffix = "█"
-	}
-
-	display := modeTag + " " + prompt + suffix
-
-	if m.status == statusConfirming {
-		display = modeTag + warningStyle.Render(" Press y (run) or n (cancel) ")
-	}
-
+	display := tag + " " + prompt + "█"
 	display = lipgloss.NewStyle().Width(m.width - 4).Render(display)
 	return inputStyle.Width(m.width - 2).Render(display)
 }
@@ -183,18 +249,9 @@ func (m model) renderScriptPanel() string {
 	}
 
 	highlighted := highlightShell(m.script)
-
-	content := lipgloss.NewStyle().
-		Padding(0, 1).
-		Width(m.width - 8).
-		Render(highlighted)
-
-	header := scriptLabelStyle.Render("📜 Script")
-	border := panelBorderStyle.
-		Width(m.width - 4).
-		Render(header + "\n" + content)
-
-	return border
+	content := lipgloss.NewStyle().Padding(0, 1).Width(m.width - 8).Render(highlighted)
+	header := scriptLabel.Render("📜 Script (Tab to close)")
+	return panelBorder.Width(m.width - 4).Render(header + "\n" + content)
 }
 
 func (m model) renderOutputPanel() string {
@@ -202,15 +259,7 @@ func (m model) renderOutputPanel() string {
 		return ""
 	}
 
-	content := lipgloss.NewStyle().
-		Padding(0, 1).
-		Width(m.width - 8).
-		Render(m.output)
-
-	header := outputLabelStyle.Render("📟 Output")
-	border := panelBorderStyle.
-		Width(m.width - 4).
-		Render(header + "\n" + content)
-
-	return border
+	content := lipgloss.NewStyle().Padding(0, 1).Width(m.width - 8).Render(m.output)
+	header := outputLabel.Render("📟 Output (Tab to close)")
+	return panelBorder.Width(m.width - 4).Render(header + "\n" + content)
 }
