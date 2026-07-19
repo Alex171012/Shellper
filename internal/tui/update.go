@@ -106,8 +106,10 @@ func (m *model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
 		m.commandBuf = ""
 		return nil
 	case "i", "a":
-		m.inputFocused = true
-		return nil
+		if !m.inputFocused {
+			m.inputFocused = true
+			return nil
+		}
 	case "escape":
 		m.inputFocused = false
 		return nil
