@@ -35,25 +35,15 @@ func (m model) View() string {
 }
 
 func (m model) renderHeader() string {
-	modeStr := " " + m.modeName()
-	modeStr = modeStyle.Render(strings.ToUpper(modeStr))
+	modeStr := modeStyle.Render(strings.ToUpper(" " + m.modeName() + " "))
+	statusStr := statusStyle.Render(" " + m.statusText() + " ")
+	personaStr := headerInfoStyle.Render(" " + m.persona + " ")
 
-	statusStr := " " + m.statusText()
-	statusStr = statusStyle.Render(statusStr)
+	right := lipgloss.JoinHorizontal(lipgloss.Left, statusStr, personaStr)
 
-	personaStr := " " + m.persona
-	personaStr = headerInfoStyle.Render(personaStr)
-
-	right := lipgloss.JoinHorizontal(lipgloss.Left,
-		statusStr,
-		" │ ", personaStr,
+	header := lipgloss.JoinHorizontal(lipgloss.Center,
+		" Shellper ", modeStr, right,
 	)
-
-	left := lipgloss.JoinHorizontal(lipgloss.Left,
-		" Shellper ", modeStr,
-	)
-
-	header := lipgloss.JoinHorizontal(lipgloss.Center, left, right)
 	header = headerStyle.Render(header)
 	header = lipgloss.NewStyle().Width(m.width).Render(header)
 
@@ -64,24 +54,42 @@ func (m model) renderMessages() string {
 	if len(m.messages) == 0 {
 		return lipgloss.NewStyle().Padding(2, 2).
 			Foreground(lipgloss.Color("#6272A4")).
-			Render("Welcome to Shellper!\n\nType a message to start.\n\nModes:\n  ask      Generate and run scripts\n  explain  Scripts with explanations\n  qa       Linux Q&A (no execution)\n\nCommands:\n  :help    Show all commands")
+			Render(`Welcome to Shellper!
+
+  Type a message and press Enter.
+  /help for commands.
+
+Modes:
+  ask      Generate and run scripts
+  explain  Scripts with explanations
+  qa       Linux Q&A (no execution)`)
 	}
 
 	var b strings.Builder
 	for _, msg := range m.messages {
-		author := messageAuthorStyle.Render(msg.role + ":")
+		var roleColor string
+		switch msg.role {
+		case "user":
+			roleColor = "#50FA7B"
+		case "assistant":
+			roleColor = "#BD93F9"
+		case "system":
+			roleColor = "#6272A4"
+		case "error":
+			roleColor = "#FF5555"
+		}
+
+		author := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(roleColor)).Render(msg.role + ":")
 		b.WriteString(author + "\n")
 		b.WriteString(messageContentStyle.Render(msg.content) + "\n")
 
 		if msg.script != "" {
-			scriptLabel := scriptLabelStyle.Render("─── Script ───")
-			b.WriteString(scriptLabel + "\n")
+			b.WriteString(scriptLabelStyle.Render("─── Script ───") + "\n")
 			b.WriteString(messageContentStyle.Render(msg.script) + "\n")
 		}
 
 		if msg.output != "" {
-			outputLabel := outputLabelStyle.Render("─── Output ───")
-			b.WriteString(outputLabel + "\n")
+			b.WriteString(outputLabelStyle.Render("─── Output ───") + "\n")
 			b.WriteString(messageContentStyle.Render(msg.output) + "\n")
 		}
 
@@ -96,19 +104,13 @@ func (m model) renderMessages() string {
 }
 
 func (m model) renderInput() string {
-	if m.commandMode {
-		prompt := helpKeyStyle.Render(":") + m.commandBuf + "█"
-		return inputStyle.Width(m.width - 2).Render(prompt)
-	}
+	modeTag := modeStyle.Render("[" + m.modeName() + "]")
 
-	var modeTag string
-	switch m.currentMode {
-	case modeAsk:
-		modeTag = "[ask]"
-	case modeExplain:
-		modeTag = "[explain]"
-	case modeQA:
-		modeTag = "[qa]"
+	var prompt string
+	if strings.HasPrefix(m.input, "/") {
+		prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB86C")).Render(m.input)
+	} else {
+		prompt = m.input
 	}
 
 	var confirmStr string
@@ -118,22 +120,17 @@ func (m model) renderInput() string {
 		confirmStr = statusStyle.Render(" Generating... ")
 	}
 
-	modeTag = modeStyle.Render(modeTag)
-
-	var inputLine string
-	if m.inputFocused {
-		inputLine = modeTag + " " + m.input + "█"
+	display := modeTag + " " + prompt
+	if strings.HasPrefix(m.input, "/") {
+		display += "█"
+	} else if confirmStr != "" {
+		display += confirmStr
 	} else {
-		if m.status == statusConfirming {
-			inputLine = modeTag + " " + confirmStr
-		} else {
-			inputLine = modeTag + " " + m.input
-		}
+		display += "█"
 	}
 
-	inputLine = lipgloss.NewStyle().Width(m.width - 4).Render(inputLine)
-
-	return inputStyle.Width(m.width - 2).Render(inputLine)
+	display = lipgloss.NewStyle().Width(m.width - 4).Render(display)
+	return inputStyle.Width(m.width - 2).Render(display)
 }
 
 func (m model) renderScriptPanel() string {
@@ -141,15 +138,12 @@ func (m model) renderScriptPanel() string {
 		return ""
 	}
 
-	lines := strings.Split(m.script, "\n")
-	display := strings.Join(lines, "\n")
-
 	content := lipgloss.NewStyle().
 		Padding(0, 1).
 		Width(m.width - 8).
-		Render(display)
+		Render(m.script)
 
-	header := scriptLabelStyle.Render("📜 Script (J/K to scroll)")
+	header := scriptLabelStyle.Render("📜 Script")
 	border := panelBorderStyle.
 		Width(m.width - 4).
 		Render(header + "\n" + content)
@@ -162,13 +156,10 @@ func (m model) renderOutputPanel() string {
 		return ""
 	}
 
-	lines := strings.Split(m.output, "\n")
-	display := strings.Join(lines, "\n")
-
 	content := lipgloss.NewStyle().
 		Padding(0, 1).
 		Width(m.width - 8).
-		Render(display)
+		Render(m.output)
 
 	header := outputLabelStyle.Render("📟 Output")
 	border := panelBorderStyle.

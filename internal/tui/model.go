@@ -73,11 +73,7 @@ type model struct {
 	output      string
 	outputPanel panelState
 
-	input        string
-	inputBuf     string
-	inputFocused bool
-	commandMode  bool
-	commandBuf   string
+	input string
 
 	width  int
 	height int
@@ -99,7 +95,6 @@ func initialModel(client llm.Client, cfg *appConfig, sessionName string, loadedM
 		persona:       "default",
 		scriptPanel:   panelHidden,
 		outputPanel:   panelHidden,
-		inputFocused:  true,
 		sessionName:   sessionName,
 		loadedSession: loadedMsgs,
 	}

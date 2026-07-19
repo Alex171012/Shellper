@@ -34,7 +34,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		return m, m.handleKeyMsg(msg)
+		return m, m.handleKey(msg)
 
 	case errMsg:
 		m.messages = append(m.messages, messageEntry{
@@ -58,13 +58,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) calcMessagesHeight() int {
-	h := m.height - 3
-	if m.scriptPanel == panelExpanded {
-		h -= 10
-	}
+	h := m.height
 	if m.outputPanel == panelExpanded {
 		h -= 6
 	}
+	if m.scriptPanel == panelExpanded {
+		h -= 10
+	}
+	h -= 4
 	if h < 5 {
 		h = 5
 	}
@@ -78,90 +79,45 @@ func (m *model) calcScriptHeight() int {
 	return 0
 }
 
-func (m *model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
-	if m.commandMode {
-		return m.handleCommandMode(msg)
-	}
-
-	if m.status == statusConfirming {
-		return m.handleConfirmKeys(msg)
-	}
-
-	if m.status == statusGenerating || m.status == statusExecuting {
-		if msg.String() == "ctrl+c" {
-			m.status = statusReady
-		}
-		return nil
-	}
-
+func (m *model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
-	case "q":
-		if !m.inputFocused {
-			return tea.Quit
-		}
 	case "ctrl+c":
-		return tea.Quit
-	case ":":
-		m.commandMode = true
-		m.commandBuf = ""
-		return nil
-	case "i", "a":
-		if !m.inputFocused {
-			m.inputFocused = true
+		if m.status == statusGenerating || m.status == statusExecuting {
+			m.status = statusReady
 			return nil
 		}
-	case "escape":
-		m.inputFocused = false
+		return tea.Quit
+
+	case "pgup":
+		m.messageVP.HalfViewUp()
 		return nil
-	case "j":
-		if !m.inputFocused {
-			m.messageVP.LineDown(1)
-		}
-	case "k":
-		if !m.inputFocused {
-			m.messageVP.LineUp(1)
-		}
-	case "J":
-		if m.scriptPanel == panelExpanded && !m.inputFocused {
-			m.scriptVP.LineDown(1)
-		}
-	case "K":
-		if m.scriptPanel == panelExpanded && !m.inputFocused {
-			m.scriptVP.LineUp(1)
-		}
-	case "enter":
-		if m.inputFocused && m.status == statusReady {
-			return m.submitInput()
-		}
+	case "pgdown":
+		m.messageVP.HalfViewDown()
+		return nil
+
 	case "tab":
 		if m.scriptPanel == panelExpanded {
 			m.scriptPanel = panelCollapsed
 			m.outputPanel = panelExpanded
 		} else if m.outputPanel == panelExpanded {
 			m.outputPanel = panelCollapsed
-			m.inputFocused = true
 		} else {
 			m.scriptPanel = panelExpanded
 		}
-	}
+		return nil
 
-	if m.inputFocused {
-		return m.handleInputKey(msg)
-	}
-
-	return nil
-}
-
-func (m *model) handleInputKey(msg tea.KeyMsg) tea.Cmd {
-	switch msg.String() {
 	case "enter":
-		if m.status == statusReady {
-			return m.submitInput()
+		if m.status != statusReady {
+			return nil
 		}
+		return m.handleEnter()
+
 	case "backspace":
 		if len(m.input) > 0 {
 			m.input = m.input[:len(m.input)-1]
 		}
+		return nil
+
 	case "ctrl+w":
 		idx := strings.LastIndex(strings.TrimRight(m.input, " "), " ")
 		if idx < 0 {
@@ -169,48 +125,49 @@ func (m *model) handleInputKey(msg tea.KeyMsg) tea.Cmd {
 		} else {
 			m.input = m.input[:idx+1]
 		}
+		return nil
+
 	case "ctrl+u":
 		m.input = ""
-	default:
-		if len(msg.String()) == 1 {
-			ch := msg.String()
-			if m.inputBuf == "j" && ch == "j" {
-				m.inputBuf = ""
-				m.inputFocused = false
-				return nil
-			}
-			if ch == "j" {
-				m.inputBuf = "j"
-			} else {
-				m.inputBuf = ""
-			}
-			m.input += ch
-		}
-	}
-	return nil
-}
-
-func (m *model) handleCommandMode(msg tea.KeyMsg) tea.Cmd {
-	switch msg.String() {
-	case "escape":
-		m.commandMode = false
-		m.commandBuf = ""
 		return nil
-	case "enter":
-		return m.executeCommand()
-	case "backspace":
-		if len(m.commandBuf) > 0 {
-			m.commandBuf = m.commandBuf[:len(m.commandBuf)-1]
-		}
-	default:
-		if len(msg.String()) == 1 {
-			m.commandBuf += msg.String()
-		}
 	}
+
+	if m.status == statusConfirming {
+		return m.handleConfirm(msg)
+	}
+
+	if len(msg.String()) == 1 {
+		m.input += msg.String()
+	}
+
 	return nil
 }
 
-func (m *model) handleConfirmKeys(msg tea.KeyMsg) tea.Cmd {
+func (m *model) handleEnter() tea.Cmd {
+	text := strings.TrimSpace(m.input)
+	if text == "" {
+		return nil
+	}
+
+	m.input = ""
+
+	if strings.HasPrefix(text, "/") {
+		return m.execCommand(text[1:])
+	}
+
+	m.messages = append(m.messages, messageEntry{
+		role: "user", content: text, time: time.Now(),
+	})
+	m.messageVP.SetContent(m.renderMessages())
+	m.messageVP.GotoBottom()
+
+	if m.currentMode == modeQA {
+		return m.startQA(text)
+	}
+	return m.startScriptGeneration(text)
+}
+
+func (m *model) handleConfirm(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "y", "Y":
 		m.status = statusExecuting
@@ -223,30 +180,111 @@ func (m *model) handleConfirmKeys(msg tea.KeyMsg) tea.Cmd {
 		m.messageVP.SetContent(m.renderMessages())
 		m.messageVP.GotoBottom()
 		return nil
-	case "ctrl+c":
-		return tea.Quit
 	}
 	return nil
 }
 
-func (m *model) submitInput() tea.Cmd {
-	query := strings.TrimSpace(m.input)
-	if query == "" {
+func (m *model) execCommand(cmd string) tea.Cmd {
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
 		return nil
 	}
 
-	m.messages = append(m.messages, messageEntry{
-		role: "user", content: query, time: time.Now(),
-	})
-	m.input = ""
-	m.inputBuf = ""
+	switch parts[0] {
+	case "quit", "exit", "q":
+		return tea.Quit
+
+	case "help":
+		m.messages = append(m.messages, messageEntry{
+			role: "system",
+			content: `Commands:
+  /help              Show this help
+  /mode ask|explain|qa   Switch mode
+  /persona <name>    Set persona (default, beginner, expert)
+  /save [name]       Save session
+  /load <name>       Load session
+  /clear             Clear conversation
+  /quit              Quit
+
+Modes:
+  ask      Fast script generation
+  explain  Script with plan + explanation
+  qa       Q&A (no execution)
+
+Keys:
+  PgUp/PgDn   Scroll messages
+  Tab         Cycle panels (script → output → hide)
+  Ctrl+C      Cancel / Quit
+  Ctrl+W      Delete word
+  Ctrl+U      Clear line`,
+			time: time.Now(),
+		})
+
+	case "mode":
+		if len(parts) > 1 {
+			switch parts[1] {
+			case "ask":
+				m.currentMode = modeAsk
+			case "explain":
+				m.currentMode = modeExplain
+			case "qa":
+				m.currentMode = modeQA
+			}
+		}
+
+	case "persona":
+		if len(parts) > 1 {
+			m.persona = parts[1]
+		}
+
+	case "clear":
+		m.messages = nil
+		m.llmHistory = nil
+		m.script = ""
+		m.output = ""
+		m.scriptPanel = panelHidden
+		m.outputPanel = panelHidden
+
+	case "save":
+		name := "unnamed"
+		if len(parts) > 1 {
+			name = parts[1]
+		}
+		if err := saveTUISession(name, m.llmHistory); err != nil {
+			m.messages = append(m.messages, messageEntry{
+				role: "error", content: "Save failed: " + err.Error(), time: time.Now(),
+			})
+		} else {
+			m.messages = append(m.messages, messageEntry{
+				role: "system", content: "Session saved: " + name, time: time.Now(),
+			})
+		}
+
+	case "load":
+		if len(parts) > 1 {
+			msgs, err := loadTUISession(parts[1])
+			if err != nil {
+				m.messages = append(m.messages, messageEntry{
+					role: "error", content: "Load failed: " + err.Error(), time: time.Now(),
+				})
+			} else {
+				m.messages = nil
+				m.llmHistory = msgs
+				for _, msg := range msgs {
+					m.messages = append(m.messages, messageEntry{
+						role: msg.Role, content: msg.Content, time: time.Now(),
+					})
+				}
+				m.messages = append(m.messages, messageEntry{
+					role: "system", content: "Session loaded: " + parts[1], time: time.Now(),
+				})
+			}
+		}
+	}
+
 	m.messageVP.SetContent(m.renderMessages())
 	m.messageVP.GotoBottom()
-
-	if m.currentMode == modeQA {
-		return m.startQA(query)
-	}
-	return m.startScriptGeneration(query)
+	return nil
 }
 
 func (m *model) startScriptGeneration(query string) tea.Cmd {
@@ -398,95 +436,6 @@ func (m *model) executeScript() tea.Cmd {
 			result: result, script: m.script,
 		}
 	}
-}
-
-func (m *model) executeCommand() tea.Cmd {
-	m.commandMode = false
-	cmd := strings.TrimSpace(m.commandBuf)
-	m.commandBuf = ""
-
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
-		return nil
-	}
-
-	switch parts[0] {
-	case "q", "quit", "exit":
-		return tea.Quit
-	case "mode":
-		if len(parts) > 1 {
-			switch parts[1] {
-			case "ask":
-				m.currentMode = modeAsk
-			case "explain":
-				m.currentMode = modeExplain
-			case "qa":
-				m.currentMode = modeQA
-			}
-		}
-	case "persona":
-		if len(parts) > 1 {
-			m.persona = parts[1]
-		}
-	case "clear":
-		m.messages = nil
-		m.llmHistory = nil
-		m.script = ""
-		m.output = ""
-		m.scriptPanel = panelHidden
-		m.outputPanel = panelHidden
-	case "save":
-		name := "unnamed"
-		if len(parts) > 1 {
-			name = parts[1]
-		}
-		if err := saveTUISession(name, m.llmHistory); err != nil {
-			m.messages = append(m.messages, messageEntry{
-				role: "error", content: "Save failed: " + err.Error(), time: time.Now(),
-			})
-		} else {
-			m.messages = append(m.messages, messageEntry{
-				role: "system", content: "Saved: " + name, time: time.Now(),
-			})
-		}
-	case "load":
-		if len(parts) > 1 {
-			msgs, err := loadTUISession(parts[1])
-			if err != nil {
-				m.messages = append(m.messages, messageEntry{
-					role: "error", content: "Load failed: " + err.Error(), time: time.Now(),
-				})
-			} else {
-				m.messages = nil
-				m.llmHistory = msgs
-				for _, msg := range msgs {
-					m.messages = append(m.messages, messageEntry{
-						role: msg.Role, content: msg.Content, time: time.Now(),
-					})
-				}
-				m.messages = append(m.messages, messageEntry{
-					role: "system", content: "Loaded: " + parts[1], time: time.Now(),
-				})
-			}
-		}
-	case "help":
-		m.messages = append(m.messages, messageEntry{
-			role: "system",
-			content: `Commands:
-  :mode ask|explain|qa
-  :persona <name>
-  :save [name]
-  :load <name>
-  :clear
-  :help
-  :q`,
-			time: time.Now(),
-		})
-	}
-
-	m.messageVP.SetContent(m.renderMessages())
-	m.messageVP.GotoBottom()
-	return nil
 }
 
 func buildSystemCtx() string {
