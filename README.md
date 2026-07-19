@@ -1,5 +1,4 @@
 # Shellper
-<<<<<<< HEAD
 
 > **AI-powered shell assistant** — turn natural language into bash/zsh scripts.
 
