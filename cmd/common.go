@@ -339,6 +339,12 @@ func confirmScript(script string, safetyResult *safety.Result, app *appContext, 
 		return confirmAbort
 	}
 
+	if strings.Contains(script, "sudo ") {
+		fmt.Println(yellow(bold("🔒 This script uses sudo — your system will ask for your password.")))
+		fmt.Println(yellow("   Shellper does NOT see or store your password."))
+		fmt.Println()
+	}
+
 	fmt.Print(tierColor("Run this script? (y/N): "))
 	if !scanner.Scan() {
 		return confirmAbort

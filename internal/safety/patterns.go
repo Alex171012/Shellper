@@ -32,7 +32,7 @@ var Patterns = []Pattern{
 	{Pattern: `rm\s+-rf\s+--no-preserve-root`, Tier: TierDangerous, Label: "rm --no-preserve-root"},
 	{Pattern: `rm\s+-rf\s+\.`, Tier: TierDangerous, Label: "rm -rf ."},
 	{Pattern: `rm\s+-rf\s+\*`, Tier: TierDangerous, Label: "rm -rf *"},
-	{Pattern: `sudo\s+`, Tier: TierDangerous, Label: "sudo command"},
+	{Pattern: `sudo\s+`, Tier: TierRisky, Label: "sudo command (password will be asked by system)"},
 	{Pattern: `:\(\)\s*\{`, Tier: TierDangerous, Label: "fork bomb"},
 	{Pattern: `\|\s*sh\b`, Tier: TierDangerous, Label: "pipe to shell"},
 	{Pattern: `\|\s*bash\b`, Tier: TierDangerous, Label: "pipe to shell"},
@@ -52,7 +52,7 @@ var Patterns = []Pattern{
 	{Pattern: `init\s+6`, Tier: TierDangerous, Label: "init 6"},
 	{Pattern: `> /dev/sd`, Tier: TierDangerous, Label: "overwrite block device"},
 	{Pattern: `wget\s+.*\||curl\s+.*\|`, Tier: TierDangerous, Label: "download and pipe"},
-	{Pattern: `\|\s*sudo\s+`, Tier: TierDangerous, Label: "pipe to sudo"},
+	{Pattern: `\|\s*sudo\s+`, Tier: TierRisky, Label: "pipe to sudo"},
 
 	{Pattern: `rm\s+`, Tier: TierRisky, Label: "rm"},
 	{Pattern: `mv\s+`, Tier: TierRisky, Label: "mv"},
