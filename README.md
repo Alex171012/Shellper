@@ -1,4 +1,5 @@
 # Shellper
+<<<<<<< HEAD
 
 > **AI-powered shell assistant** — turn natural language into bash/zsh scripts.
 
@@ -186,3 +187,7 @@ go vet ./...              # Lint
 ## License
 
 MIT © [Alex171012](LICENSE)
+
+---
+
+Built with [DeepSeek-v4-Flash](https://deepseek.com) — the AI that designed, implemented, and documented every line of Shellper.
