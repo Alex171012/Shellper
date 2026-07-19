@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func (m model) View() string {
+func (m *model) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
@@ -22,13 +22,16 @@ func (m model) View() string {
 	if m.messageVP.TotalLineCount() > m.messageVP.VisibleLineCount() {
 		atTop := m.messageVP.YOffset <= 0
 		atBottom := m.messageVP.YOffset+m.messageVP.VisibleLineCount() >= m.messageVP.TotalLineCount()
-
 		if !atTop {
 			body += "\n" + dimStyle.Padding(0, 2).Render("▲ PgUp")
 		}
 		if !atBottom {
 			body += "\n" + dimStyle.Padding(0, 2).Render("▼ PgDn")
 		}
+	}
+
+	if m.cmdMenuShow {
+		body += "\n" + m.renderCmdMenu()
 	}
 
 	if m.status == statusConfirming {
@@ -46,22 +49,21 @@ func (m model) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, input)
 }
 
-func (m model) renderHeader() string {
+func (m *model) renderHeader() string {
 	mode := modeTag.Render(strings.ToUpper(" " + m.modeName() + " "))
 	status := statusTag.Render(" " + m.statusText() + " ")
 	persona := headerInfo.Render(" " + m.persona + " ")
-
 	right := lipgloss.JoinHorizontal(lipgloss.Left, status, persona)
 	line := lipgloss.JoinHorizontal(lipgloss.Center, " Shellper ", mode, right)
 	return headerStyle.Width(m.width).Render(line)
 }
 
-func (m model) renderMessages() string {
+func (m *model) renderMessages() string {
 	if len(m.messages) == 0 {
 		return welcomeStyle.Render(
 			"Welcome to Shellper\n\n" +
 				"Type a message and press Enter.\n" +
-				"Use /help to see available commands.\n\n" +
+				"Type / or press / to open the command menu.\n\n" +
 				"  " + modeTag.Render("[ask]") + "  Generate and run scripts\n" +
 				"  " + modeTag.Render("[explain]") + "  Scripts with explanations\n" +
 				"  " + modeTag.Render("[qa]") + "  Linux Q&A (no execution)",
@@ -69,31 +71,28 @@ func (m model) renderMessages() string {
 	}
 
 	var b strings.Builder
-	msgCount := len(m.messages)
-
-	for i, msg := range m.messages {
+	for _, msg := range m.messages {
 		label := m.messageLabel(msg)
 		ts := timestampStyle(msg.time.Format("15:04"))
-
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Left, label, " ", ts) + "\n")
 
 		switch msg.role {
 		case "assistant":
-			b.WriteString(m.renderAssistantContent(msg.content) + "\n")
+			if msg.streaming {
+				content := msg.content
+				if content == "" {
+					content = "▊"
+				} else {
+					content = content + "▊"
+				}
+				b.WriteString(content + "\n")
+			} else {
+				b.WriteString(m.renderAssistantContent(msg.content) + "\n")
+			}
 		case "error":
 			b.WriteString(errorStyle.Render(msg.content) + "\n")
 		default:
 			b.WriteString(msg.content + "\n")
-		}
-
-		if msg.script != "" && i < msgCount-1 {
-			b.WriteString("  " + scriptLabel.Render("Script:") + "\n")
-			b.WriteString(highlightShell(msg.script) + "\n")
-		}
-
-		if msg.output != "" && i < msgCount-1 {
-			b.WriteString("  " + outputLabel.Render("Output:") + "\n")
-			b.WriteString(msg.output + "\n")
 		}
 
 		if msg.exitCode != 0 {
@@ -106,11 +105,14 @@ func (m model) renderMessages() string {
 	return b.String()
 }
 
-func (m model) messageLabel(msg messageEntry) string {
+func (m *model) messageLabel(msg messageEntry) string {
 	switch msg.role {
 	case "user":
 		return userLabel("You")
 	case "assistant":
+		if msg.streaming {
+			return statusTag.Render("Shellper ●")
+		}
 		return assistantLabel("Shellper")
 	case "system":
 		return systemLabel("System")
@@ -120,7 +122,7 @@ func (m model) messageLabel(msg messageEntry) string {
 	return msg.role
 }
 
-func (m model) renderAssistantContent(content string) string {
+func (m *model) renderAssistantContent(content string) string {
 	var result strings.Builder
 	lines := strings.Split(content, "\n")
 	inCodeBlock := false
@@ -166,7 +168,39 @@ func (m model) renderAssistantContent(content string) string {
 	return out
 }
 
-func (m model) renderConfirmPanel() string {
+func (m *model) renderCmdMenu() string {
+	items := filteredCmds(m)
+	if len(items) == 0 {
+		return dimStyle.Padding(0, 2).Render("No matching commands")
+	}
+
+	var b strings.Builder
+	b.WriteString(dimStyle.Padding(0, 2).Render("Commands:") + "\n")
+
+	for i, item := range items {
+		mark := "  "
+		style := dimStyle
+		if i == m.cmdMenuSel {
+			mark = "▸ "
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#50FA7B")).Bold(true)
+		}
+
+		args := item.args
+		if args != "" {
+			args = " " + args
+		}
+		line := fmt.Sprintf("%s/%s%s  %s", mark, item.name, args, item.description)
+		b.WriteString(style.Padding(0, 2).Render(line) + "\n")
+	}
+
+	width := m.width - 4
+	if width < 40 {
+		width = 40
+	}
+	return panelBorder.Width(width).Render(b.String())
+}
+
+func (m *model) renderConfirmPanel() string {
 	if m.script == "" {
 		return ""
 	}
@@ -194,7 +228,6 @@ func (m model) renderConfirmPanel() string {
 
 	var b strings.Builder
 	b.WriteString(scriptLabel.Render("═══ Confirm Script ═══") + "\n")
-
 	b.WriteString(lipgloss.NewStyle().Padding(0, 1).Margin(0, 1).Render(highlighted) + "\n")
 
 	if len(warnings) > 0 {
@@ -211,11 +244,10 @@ func (m model) renderConfirmPanel() string {
 	if width < 40 {
 		width = 40
 	}
-
 	return panelBorder.Width(width).Render(b.String())
 }
 
-func (m model) renderInput() string {
+func (m *model) renderInput() string {
 	tag := modeTag.Render("[" + m.modeName() + "]")
 
 	switch m.status {
@@ -229,21 +261,32 @@ func (m model) renderInput() string {
 		)
 	case statusConfirming:
 		return inputStyle.Width(m.width - 2).Render(
-			tag + "  " + warningStyle.Render("Confirm above (y/N)"),
+			tag + "  " + warningStyle.Render("y (run) / n (cancel)"),
+		)
+	}
+
+	if m.cmdMenuShow {
+		return inputStyle.Width(m.width - 2).Render(
+			tag + "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB86C")).Render(m.input+"█"),
 		)
 	}
 
 	prompt := m.input
-	if strings.HasPrefix(m.input, "/") {
+	if m.input == "" {
+		prompt = dimStyle.Render("Type a message…  /  for menu")
+	} else if strings.HasPrefix(m.input, "/") {
 		prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB86C")).Render(m.input)
 	}
 
-	display := tag + " " + prompt + "█"
+	display := tag + " " + prompt
+	if m.input != "" && !strings.HasPrefix(m.input, "/") {
+		display += "█"
+	}
 	display = lipgloss.NewStyle().Width(m.width - 4).Render(display)
 	return inputStyle.Width(m.width - 2).Render(display)
 }
 
-func (m model) renderScriptPanel() string {
+func (m *model) renderScriptPanel() string {
 	if m.script == "" || m.scriptPanel != panelExpanded {
 		return ""
 	}
@@ -254,7 +297,7 @@ func (m model) renderScriptPanel() string {
 	return panelBorder.Width(m.width - 4).Render(header + "\n" + content)
 }
 
-func (m model) renderOutputPanel() string {
+func (m *model) renderOutputPanel() string {
 	if m.output == "" || m.outputPanel != panelExpanded {
 		return ""
 	}

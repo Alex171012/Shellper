@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"shellper/internal/llm"
 )
 
@@ -32,6 +33,7 @@ type messageEntry struct {
 	script   string
 	output   string
 	exitCode int
+	streaming bool
 }
 
 type panelState int
@@ -41,6 +43,22 @@ const (
 	panelCollapsed
 	panelExpanded
 )
+
+type cmdItem struct {
+	name        string
+	args        string
+	description string
+}
+
+var cmdMenuItems = []cmdItem{
+	{name: "mode", args: "ask|explain|qa", description: "Switch operation mode"},
+	{name: "persona", args: "default|beginner|expert", description: "Set AI persona"},
+	{name: "save", args: "[name]", description: "Save current session"},
+	{name: "load", args: "<name>", description: "Load a saved session"},
+	{name: "clear", args: "", description: "Clear conversation"},
+	{name: "help", args: "", description: "Show help"},
+	{name: "quit", args: "", description: "Exit Shellper"},
+}
 
 type appConfig struct {
 	model        string
@@ -54,6 +72,7 @@ type appConfig struct {
 }
 
 type model struct {
+	program   *tea.Program
 	appCtx    context.Context
 	cancel    context.CancelFunc
 	llmClient llm.Client
@@ -73,7 +92,12 @@ type model struct {
 	output      string
 	outputPanel panelState
 
-	input string
+	input        string
+	streamContent string
+
+	cmdMenuShow   bool
+	cmdMenuFilter string
+	cmdMenuSel    int
 
 	width  int
 	height int
@@ -81,11 +105,13 @@ type model struct {
 	llmHistory    []llm.Message
 	sessionName   string
 	loadedSession []llm.Message
+
+	streamingMsgIdx int
 }
 
-func initialModel(client llm.Client, cfg *appConfig, sessionName string, loadedMsgs []llm.Message) model {
+func initialModel(client llm.Client, cfg *appConfig, sessionName string, loadedMsgs []llm.Message) *model {
 	ctx, cancel := context.WithCancel(context.Background())
-	m := model{
+	m := &model{
 		appCtx:        ctx,
 		cancel:        cancel,
 		llmClient:     client,
@@ -97,6 +123,7 @@ func initialModel(client llm.Client, cfg *appConfig, sessionName string, loadedM
 		outputPanel:   panelHidden,
 		sessionName:   sessionName,
 		loadedSession: loadedMsgs,
+		streamingMsgIdx: -1,
 	}
 
 	if len(loadedMsgs) > 0 {

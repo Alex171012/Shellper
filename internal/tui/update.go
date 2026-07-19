@@ -11,8 +11,15 @@ import (
 	"shellper/internal/safety"
 )
 
-type errMsg struct{ err error }
-type streamDoneMsg struct{ response string }
+type streamChunkMsg struct {
+	chunk string
+	idx   int
+}
+type streamDoneMsg struct {
+	response string
+	idx      int
+	err      error
+}
 type execDoneMsg struct {
 	result *executor.Result
 	script string
@@ -29,29 +36,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.messageVP.Width = msg.Width - 4
 		m.messageVP.Height = m.calcMessagesHeight()
-		m.scriptVP.Width = msg.Width - 6
-		m.scriptVP.Height = m.calcScriptHeight()
 		return m, nil
 
 	case tea.KeyMsg:
 		return m, m.handleKey(msg)
 
-	case errMsg:
-		m.messages = append(m.messages, messageEntry{
-			role: "error", content: msg.err.Error(), time: time.Now(),
-		})
-		m.status = statusReady
-		m.messageVP.SetContent(m.renderMessages())
-		m.messageVP.GotoBottom()
+	case streamChunkMsg:
+		m.handleStreamChunk(msg)
 		return m, nil
 
 	case streamDoneMsg:
-		*m = m.handleStreamDone(msg)
-		return m, nil
+		return m.handleStreamDone(msg)
 
 	case execDoneMsg:
-		*m = m.handleExecDone(msg)
-		return m, nil
+		return m.handleExecDone(msg)
 	}
 
 	return m, nil
@@ -66,23 +64,39 @@ func (m *model) calcMessagesHeight() int {
 		h -= 10
 	}
 	h -= 4
+	if m.cmdMenuShow {
+		items := filteredCmds(m)
+		count := len(items)
+		if count > 7 {
+			count = 7
+		}
+		h -= count + 2
+	}
 	if h < 5 {
 		h = 5
 	}
 	return h
 }
 
-func (m *model) calcScriptHeight() int {
-	if m.scriptPanel == panelExpanded {
-		return 8
+func filteredCmds(m *model) []cmdItem {
+	if m.cmdMenuFilter == "" {
+		return cmdMenuItems
 	}
-	return 0
+	var f []cmdItem
+	for _, c := range cmdMenuItems {
+		if strings.Contains(c.name, m.cmdMenuFilter) {
+			f = append(f, c)
+		}
+	}
+	return f
 }
 
 func (m *model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "ctrl+c":
 		if m.status == statusGenerating || m.status == statusExecuting {
+			m.cancel()
+			m.finishStreamingMsg("cancelled")
 			m.status = statusReady
 			return nil
 		}
@@ -107,14 +121,62 @@ func (m *model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 
 	case "enter":
+		if m.cmdMenuShow {
+			return m.selectCmdMenu()
+		}
+		if m.status == statusConfirming {
+			return m.execConfirm(true)
+		}
 		if m.status != statusReady {
 			return nil
 		}
 		return m.handleEnter()
 
+	case "up":
+		if m.cmdMenuShow {
+			items := filteredCmds(m)
+			if len(items) > 0 {
+				m.cmdMenuSel = (m.cmdMenuSel - 1 + len(items)) % len(items)
+			}
+			return nil
+		}
+		m.messageVP.LineUp(1)
+		return nil
+
+	case "down":
+		if m.cmdMenuShow {
+			items := filteredCmds(m)
+			if len(items) > 0 {
+				m.cmdMenuSel = (m.cmdMenuSel + 1) % len(items)
+			}
+			return nil
+		}
+		m.messageVP.LineDown(1)
+		return nil
+
+	case "escape":
+		if m.cmdMenuShow {
+			m.cmdMenuShow = false
+			m.cmdMenuFilter = ""
+			return nil
+		}
+		if m.status == statusConfirming {
+			return m.execConfirm(false)
+		}
+		return nil
+
 	case "backspace":
 		if len(m.input) > 0 {
 			m.input = m.input[:len(m.input)-1]
+			if m.cmdMenuShow {
+				if strings.HasPrefix(m.input, "/") {
+					m.cmdMenuFilter = m.input[1:]
+				} else {
+					m.cmdMenuShow = false
+					m.cmdMenuFilter = ""
+				}
+				m.cmdMenuSel = 0
+			}
 		}
 		return nil
 
@@ -125,21 +187,59 @@ func (m *model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		} else {
 			m.input = m.input[:idx+1]
 		}
+		m.cmdMenuShow = false
 		return nil
 
 	case "ctrl+u":
 		m.input = ""
+		m.cmdMenuShow = false
 		return nil
 	}
 
 	if m.status == statusConfirming {
-		return m.handleConfirm(msg)
+		if msg.String() == "y" || msg.String() == "Y" {
+			return m.execConfirm(true)
+		}
+		if msg.String() == "n" || msg.String() == "N" {
+			return m.execConfirm(false)
+		}
+		return nil
 	}
 
 	if len(msg.String()) == 1 {
-		m.input += msg.String()
+		ch := msg.String()
+		if !m.cmdMenuShow && ch == "/" && m.input == "" {
+			m.cmdMenuShow = true
+			m.cmdMenuFilter = ""
+			m.cmdMenuSel = 0
+		}
+		m.input += ch
+		if m.cmdMenuShow {
+			m.cmdMenuFilter = m.input[1:]
+			m.cmdMenuSel = 0
+		}
 	}
 
+	return nil
+}
+
+func (m *model) selectCmdMenu() tea.Cmd {
+	items := filteredCmds(m)
+	if len(items) == 0 {
+		return nil
+	}
+	if m.cmdMenuSel >= len(items) {
+		m.cmdMenuSel = 0
+	}
+	sel := items[m.cmdMenuSel]
+
+	if sel.args != "" {
+		m.input = "/" + sel.name + " "
+	} else {
+		m.input = "/" + sel.name
+	}
+	m.cmdMenuShow = false
+	m.cmdMenuFilter = ""
 	return nil
 }
 
@@ -150,6 +250,7 @@ func (m *model) handleEnter() tea.Cmd {
 	}
 
 	m.input = ""
+	m.cmdMenuShow = false
 
 	if strings.HasPrefix(text, "/") {
 		return m.execCommand(text[1:])
@@ -167,21 +268,20 @@ func (m *model) handleEnter() tea.Cmd {
 	return m.startScriptGeneration(text)
 }
 
-func (m *model) handleConfirm(msg tea.KeyMsg) tea.Cmd {
-	switch msg.String() {
-	case "y", "Y":
-		m.status = statusExecuting
-		return m.executeScript()
-	case "n", "N", "escape":
+func (m *model) execConfirm(approve bool) tea.Cmd {
+	if !approve {
 		m.messages = append(m.messages, messageEntry{
 			role: "system", content: "Cancelled.", time: time.Now(),
 		})
+		m.script = ""
 		m.status = statusReady
 		m.messageVP.SetContent(m.renderMessages())
 		m.messageVP.GotoBottom()
 		return nil
 	}
-	return nil
+
+	m.status = statusExecuting
+	return m.executeScript()
 }
 
 func (m *model) execCommand(cmd string) tea.Cmd {
@@ -195,29 +295,18 @@ func (m *model) execCommand(cmd string) tea.Cmd {
 		return tea.Quit
 
 	case "help":
+		var b strings.Builder
+		b.WriteString("Commands:\n")
+		for _, c := range cmdMenuItems {
+			args := c.args
+			if args != "" {
+				args = " " + args
+			}
+			b.WriteString(fmt.Sprintf("  /%s%s  — %s\n", c.name, args, c.description))
+		}
+		b.WriteString("\nKeys:\n  PgUp/PgDn  Scroll  Tab  Cycle panels\n  Ctrl+C  Cancel/Quit  Ctrl+W  Del word\n  /  Show command menu")
 		m.messages = append(m.messages, messageEntry{
-			role: "system",
-			content: `Commands:
-  /help              Show this help
-  /mode ask|explain|qa   Switch mode
-  /persona <name>    Set persona (default, beginner, expert)
-  /save [name]       Save session
-  /load <name>       Load session
-  /clear             Clear conversation
-  /quit              Quit
-
-Modes:
-  ask      Fast script generation
-  explain  Script with plan + explanation
-  qa       Q&A (no execution)
-
-Keys:
-  PgUp/PgDn   Scroll messages
-  Tab         Cycle panels (script → output → hide)
-  Ctrl+C      Cancel / Quit
-  Ctrl+W      Delete word
-  Ctrl+U      Clear line`,
-			time: time.Now(),
+			role: "system", content: b.String(), time: time.Now(),
 		})
 
 	case "mode":
@@ -291,35 +380,49 @@ func (m *model) startScriptGeneration(query string) tea.Cmd {
 	m.status = statusGenerating
 	m.scriptPanel = panelHidden
 	m.outputPanel = panelHidden
+	m.streamingMsgIdx = -1
 
 	messages := buildTUIPrompt(query, m.modeName(), buildSystemCtx(), m.currentMode == modeExplain || m.cfg.thinkEnabled, m.persona)
 	m.llmHistory = append(m.llmHistory, messages...)
 
-	return func() tea.Msg {
-		var fullResponse strings.Builder
+	idx := len(m.messages)
+	m.streamingMsgIdx = idx
+	m.messages = append(m.messages, messageEntry{
+		role: "assistant", content: "", time: time.Now(), streaming: true,
+	})
+	m.messageVP.SetContent(m.renderMessages())
+	m.messageVP.GotoBottom()
 
+	prog := m.program
+	client := m.llmClient
+	modelName := m.cfg.model
+	temp := m.cfg.temperature
+	ctx := m.appCtx
+	histCopy := make([]llm.Message, len(m.llmHistory))
+	copy(histCopy, m.llmHistory)
+
+	return func() tea.Msg {
+		var fullContent strings.Builder
 		onChunk := llm.StreamHandler(func(chunk string) error {
-			fullResponse.WriteString(chunk)
+			fullContent.WriteString(chunk)
+			if prog != nil {
+				prog.Send(streamChunkMsg{chunk: chunk, idx: idx})
+			}
 			return nil
 		})
 
-		opts := &llm.ChatOptions{
-			Model:       m.cfg.model,
-			Temperature: m.cfg.temperature,
-		}
-
-		resp, err := m.llmClient.ChatStream(m.appCtx, m.llmHistory, opts, onChunk)
+		opts := &llm.ChatOptions{Model: modelName, Temperature: temp}
+		resp, err := client.ChatStream(ctx, histCopy, opts, onChunk)
 		if err != nil {
-			return errMsg{err: err}
+			return streamDoneMsg{idx: idx, err: err}
 		}
 		if len(resp.Choices) > 0 {
-			content := strings.TrimSpace(resp.Choices[0].Message.Content)
-			m.llmHistory = append(m.llmHistory,
-				llm.Message{Role: "assistant", Content: content},
-			)
-			return streamDoneMsg{response: content}
+			return streamDoneMsg{
+				response: strings.TrimSpace(resp.Choices[0].Message.Content),
+				idx:      idx,
+			}
 		}
-		return errMsg{err: fmt.Errorf("empty response")}
+		return streamDoneMsg{idx: idx, err: fmt.Errorf("empty response")}
 	}
 }
 
@@ -329,52 +432,102 @@ func (m *model) startQA(query string) tea.Cmd {
 	messages := buildQARequest(query, buildSystemCtx())
 	m.llmHistory = append(m.llmHistory, messages...)
 
-	return func() tea.Msg {
-		var fullResponse strings.Builder
+	idx := len(m.messages)
+	m.streamingMsgIdx = idx
+	m.messages = append(m.messages, messageEntry{
+		role: "assistant", content: "", time: time.Now(), streaming: true,
+	})
+	m.messageVP.SetContent(m.renderMessages())
+	m.messageVP.GotoBottom()
 
+	prog := m.program
+	client := m.llmClient
+	modelName := m.cfg.model
+	temp := m.cfg.temperature
+	ctx := m.appCtx
+	histCopy := make([]llm.Message, len(m.llmHistory))
+	copy(histCopy, m.llmHistory)
+
+	return func() tea.Msg {
+		var fullContent strings.Builder
 		onChunk := llm.StreamHandler(func(chunk string) error {
-			fullResponse.WriteString(chunk)
+			fullContent.WriteString(chunk)
+			if prog != nil {
+				prog.Send(streamChunkMsg{chunk: chunk, idx: idx})
+			}
 			return nil
 		})
 
-		opts := &llm.ChatOptions{
-			Model:       m.cfg.model,
-			Temperature: m.cfg.temperature,
-		}
-
-		resp, err := m.llmClient.ChatStream(m.appCtx, m.llmHistory, opts, onChunk)
+		opts := &llm.ChatOptions{Model: modelName, Temperature: temp}
+		resp, err := client.ChatStream(ctx, histCopy, opts, onChunk)
 		if err != nil {
-			return errMsg{err: err}
+			return streamDoneMsg{idx: idx, err: err}
 		}
 		if len(resp.Choices) > 0 {
-			content := strings.TrimSpace(resp.Choices[0].Message.Content)
-			m.llmHistory = append(m.llmHistory,
-				llm.Message{Role: "assistant", Content: content},
-			)
-			return streamDoneMsg{response: content}
+			return streamDoneMsg{
+				response: strings.TrimSpace(resp.Choices[0].Message.Content),
+				idx:      idx,
+			}
 		}
-		return errMsg{err: fmt.Errorf("empty response")}
+		return streamDoneMsg{idx: idx, err: fmt.Errorf("empty response")}
 	}
 }
 
-func (m *model) handleStreamDone(msg streamDoneMsg) model {
-	m.messages = append(m.messages, messageEntry{
-		role: "assistant", content: msg.response, time: time.Now(),
-	})
+func (m *model) handleStreamChunk(msg streamChunkMsg) {
+	if msg.idx >= 0 && msg.idx < len(m.messages) {
+		m.messages[msg.idx].content += msg.chunk
+		m.messages[msg.idx].streaming = true
+	}
+	if m.messageVP.AtBottom() {
+		m.messageVP.SetContent(m.renderMessages())
+		m.messageVP.GotoBottom()
+	}
+}
+
+func (m *model) finishStreamingMsg(endText string) {
+	if m.streamingMsgIdx >= 0 && m.streamingMsgIdx < len(m.messages) {
+		m.messages[m.streamingMsgIdx].streaming = false
+		if m.messages[m.streamingMsgIdx].content == "" {
+			m.messages[m.streamingMsgIdx].content = endText
+		}
+	}
+	m.streamingMsgIdx = -1
+}
+
+func (m *model) handleStreamDone(msg streamDoneMsg) (tea.Model, tea.Cmd) {
+	m.finishStreamingMsg("")
+
+	if msg.err != nil {
+		m.messages = append(m.messages, messageEntry{
+			role: "error", content: msg.err.Error(), time: time.Now(),
+		})
+		m.status = statusReady
+		m.messageVP.SetContent(m.renderMessages())
+		m.messageVP.GotoBottom()
+		return m, nil
+	}
+
+	fullContent := strings.TrimSpace(msg.response)
+	if msg.idx >= 0 && msg.idx < len(m.messages) {
+		m.messages[msg.idx].content = fullContent
+	}
+	m.llmHistory = append(m.llmHistory,
+		llm.Message{Role: "assistant", Content: fullContent},
+	)
 
 	if m.currentMode == modeQA {
 		m.status = statusReady
 		m.messageVP.SetContent(m.renderMessages())
 		m.messageVP.GotoBottom()
-		return *m
+		return m, nil
 	}
 
-	script := extractTUIScript(msg.response)
+	script := extractTUIScript(fullContent)
 	if strings.TrimSpace(script) == "" {
 		m.status = statusReady
 		m.messageVP.SetContent(m.renderMessages())
 		m.messageVP.GotoBottom()
-		return *m
+		return m, nil
 	}
 
 	m.script = script
@@ -398,15 +551,17 @@ func (m *model) handleStreamDone(msg streamDoneMsg) model {
 		m.status = statusConfirming
 	} else {
 		m.status = statusExecuting
-		return *m
+		m.messageVP.SetContent(m.renderMessages())
+		m.messageVP.GotoBottom()
+		return m, m.executeScript()
 	}
 
 	m.messageVP.SetContent(m.renderMessages())
 	m.messageVP.GotoBottom()
-	return *m
+	return m, nil
 }
 
-func (m *model) handleExecDone(msg execDoneMsg) model {
+func (m *model) handleExecDone(msg execDoneMsg) (tea.Model, tea.Cmd) {
 	m.output = msg.result.Output
 	m.outputPanel = panelExpanded
 
@@ -420,7 +575,7 @@ func (m *model) handleExecDone(msg execDoneMsg) model {
 	m.status = statusReady
 	m.messageVP.SetContent(m.renderMessages())
 	m.messageVP.GotoBottom()
-	return *m
+	return m, nil
 }
 
 func (m *model) executeScript() tea.Cmd {
@@ -432,9 +587,7 @@ func (m *model) executeScript() tea.Cmd {
 				script: m.script,
 			}
 		}
-		return execDoneMsg{
-			result: result, script: m.script,
-		}
+		return execDoneMsg{result: result, script: m.script}
 	}
 }
 

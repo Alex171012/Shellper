@@ -58,7 +58,8 @@ func StartTUI(opts TUIOpts) error {
 	}
 
 	m := initialModel(client, cfg, opts.SessionName, loadedMsgs)
-	p := tea.NewProgram(&m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	m.program = p
 
 	_, err := p.Run()
 	return err
