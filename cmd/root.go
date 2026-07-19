@@ -87,6 +87,7 @@ Run without arguments for interactive REPL mode.`,
 	rootCmd.AddCommand(explainCmd(app))
 	rootCmd.AddCommand(qaCmd(app))
 	rootCmd.AddCommand(sessionCmd())
+	rootCmd.AddCommand(tuiCmd())
 
 	return rootCmd
 }
