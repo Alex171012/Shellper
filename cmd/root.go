@@ -8,10 +8,10 @@ import (
 	"os/signal"
 	"strings"
 
-	"github.com/sasha_tecno/shellper/internal/config"
-	"github.com/sasha_tecno/shellper/internal/executor"
-	"github.com/sasha_tecno/shellper/internal/llm"
-	"github.com/sasha_tecno/shellper/internal/safety"
+	"shellper/internal/config"
+	"shellper/internal/executor"
+	"shellper/internal/llm"
+	"shellper/internal/safety"
 	"github.com/spf13/cobra"
 )
 

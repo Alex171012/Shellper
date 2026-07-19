@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sasha_tecno/shellper/internal/config"
+	"shellper/internal/config"
 )
 
 var welcomeShown bool

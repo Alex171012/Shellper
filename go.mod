@@ -1,4 +1,4 @@
-module github.com/sasha_tecno/shellper
+module shellper
 
 go 1.25.11
 

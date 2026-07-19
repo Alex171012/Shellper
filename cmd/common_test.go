@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sasha_tecno/shellper/internal/llm"
+	"shellper/internal/llm"
 )
 
 func TestExtractScript(t *testing.T) {

@@ -11,9 +11,9 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/fatih/color"
-	"github.com/sasha_tecno/shellper/internal/executor"
-	"github.com/sasha_tecno/shellper/internal/llm"
-	"github.com/sasha_tecno/shellper/internal/safety"
+	"shellper/internal/executor"
+	"shellper/internal/llm"
+	"shellper/internal/safety"
 )
 
 var (

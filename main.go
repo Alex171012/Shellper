@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/sasha_tecno/shellper/cmd"
+	"shellper/cmd"
 )
 
 func main() {

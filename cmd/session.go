@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/sasha_tecno/shellper/internal/llm"
+	"shellper/internal/llm"
 	"github.com/spf13/cobra"
 )
 
