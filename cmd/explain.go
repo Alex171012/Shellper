@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"shellper/internal/tools"
 )
 
 func explainCmd(app *appContext) *cobra.Command {
-	return &cobra.Command{
+	var files []string
+
+	c := &cobra.Command{
 		Use:   "explain [query]",
 		Short: "Generate a script with explanations and plan",
 		Long: `Ask Shellper to generate a script that teaches you.
@@ -22,12 +26,24 @@ Always shows a plan before the script. Use this to learn what each command does.
 Examples:
   shellper explain "how to find and delete old logs"
   shellper explain "backup my home directory to /backup"
-  shellper explain "check disk usage by directory"`,
+  shellper explain --file docker-compose.yml "explain this compose file"`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			query := args[0]
-			for _, a := range args[1:] {
-				query += " " + a
+			query := strings.Join(args, " ")
+
+			if len(files) > 0 {
+				var parts []string
+				for _, f := range files {
+					content, err := tools.ReadFileForContext(f)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+						continue
+					}
+					parts = append(parts, content)
+				}
+				if len(parts) > 0 {
+					query = query + "\n\n" + strings.Join(parts, "\n")
+				}
 			}
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -46,4 +62,7 @@ Examples:
 			return nil
 		},
 	}
+
+	c.Flags().StringSliceVar(&files, "file", nil, "Include file contents as context (can repeat)")
+	return c
 }

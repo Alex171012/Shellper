@@ -131,7 +131,8 @@ Rules:%s
 - Wrap the commands in a code block with shell language tag
 - Prefer built-in commands over external tools when possible
 - Never use sudo in generated commands
-- If the request is impossible or dangerous, explain why instead`, persona.SystemIntro, sysCtx, thinkBlock, personaRules)
+- If the request is impossible or dangerous, explain why instead
+- To read a file for context before generating commands, use: @read <filepath> on its own line`, persona.SystemIntro, sysCtx, thinkBlock, personaRules)
 
 	if mode == "explain" {
 		system += fmt.Sprintf(`

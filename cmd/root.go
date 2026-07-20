@@ -28,7 +28,7 @@ func NewRootCmd() *cobra.Command {
 	}
 
 	app := &appContext{
-		llmClient: llm.NewClient(cfg.Backend, cfg.OllamaURL, cfg.OpenAIBase, cfg.OpenAIKey),
+		llmClient: llm.NewClient(cfg.Backend, cfg.OllamaURL, cfg.OpenAIBase, cfg.OpenAIKey, cfg.AnthropicKey),
 		cfg: &appConfig{
 			model:        cfg.Model,
 			safetyMode:   cfg.Safety,

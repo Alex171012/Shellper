@@ -9,14 +9,15 @@ import (
 )
 
 type Config struct {
-	Backend     string `yaml:"backend"`
-	Model       string `yaml:"model"`
-	OllamaURL   string `yaml:"ollama_url"`
-	OpenAIKey   string `yaml:"openai_key"`
-	OpenAIBase  string `yaml:"openai_base"`
-	Safety      string `yaml:"safety"`
+	Backend      string `yaml:"backend"`
+	Model        string `yaml:"model"`
+	OllamaURL    string `yaml:"ollama_url"`
+	OpenAIKey    string `yaml:"openai_key"`
+	OpenAIBase   string `yaml:"openai_base"`
+	AnthropicKey string `yaml:"anthropic_key"`
+	Safety       string `yaml:"safety"`
 	DefaultShell string `yaml:"default_shell"`
-	DefaultMode string `yaml:"default_mode"`
+	DefaultMode  string `yaml:"default_mode"`
 }
 
 func Default() *Config {
@@ -77,6 +78,9 @@ func Load() (*Config, error) {
 	}
 	if v := os.Getenv("SHELLPER_OPENAI_BASE"); v != "" {
 		cfg.OpenAIBase = v
+	}
+	if v := os.Getenv("SHELLPER_ANTHROPIC_KEY"); v != "" {
+		cfg.AnthropicKey = v
 	}
 	if v := os.Getenv("SHELLPER_SAFETY"); v != "" {
 		cfg.Safety = v

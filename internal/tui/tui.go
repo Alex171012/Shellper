@@ -25,7 +25,7 @@ type TUIOpts struct {
 }
 
 func StartTUI(opts TUIOpts) error {
-	client := llm.NewClient(opts.Backend, opts.OllamaURL, opts.OpenAIBase, opts.OpenAIKey)
+	client := llm.NewClient(opts.Backend, opts.OllamaURL, opts.OpenAIBase, opts.OpenAIKey, "")
 
 	shellCmd := opts.DefaultShell
 	if shellCmd == "auto" {
@@ -125,7 +125,8 @@ Rules:%s
 %s
 - Wrap the commands in a code block with shell language tag
 - Never use sudo in generated commands
-- If the request is impossible or dangerous, explain why instead`, intro, sysCtx, thinkBlock, extraRules)
+- If the request is impossible or dangerous, explain why instead
+- To read a file for context before generating commands, use: @read <filepath> on its own line`, intro, sysCtx, thinkBlock, extraRules)
 
 	if mode == "explain" {
 		system += fmt.Sprintf(`

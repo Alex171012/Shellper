@@ -31,12 +31,17 @@ type ChatOptions struct {
 	MaxTokens   int
 }
 
-func NewClient(backend, ollamaURL, openaiBase, openaiKey string) Client {
+func NewClient(backend, ollamaURL, openaiBase, openaiKey, anthropicKey string) Client {
 	switch backend {
 	case "openai":
 		return &OpenAIClient{
 			baseURL: openaiBase,
 			apiKey:  openaiKey,
+		}
+	case "anthropic":
+		return &AnthropicClient{
+			apiKey:  anthropicKey,
+			baseURL: ollamaURL,
 		}
 	default:
 		return &OllamaClient{

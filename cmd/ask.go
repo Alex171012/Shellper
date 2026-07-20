@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"shellper/internal/tools"
 )
 
 func askCmd(app *appContext) *cobra.Command {
-	return &cobra.Command{
+	var files []string
+
+	c := &cobra.Command{
 		Use:   "ask [query]",
 		Short: "Generate and execute a shell script",
 		Long: `Ask Shellper to perform a task. It generates a shell script,
@@ -21,12 +25,25 @@ By default, ask mode is fast — no planning step. Use --think to enable it.
 Examples:
   shellper ask "create a file called hello.txt with content 'Hello World'"
   shellper ask "find all files larger than 100MB in /tmp"
-  shellper ask --think "backup my home directory"`,
+  shellper ask --think "backup my home directory"
+  shellper ask --file main.go "review this file for issues"`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			query := args[0]
-			for _, a := range args[1:] {
-				query += " " + a
+			query := strings.Join(args, " ")
+
+			if len(files) > 0 {
+				var parts []string
+				for _, f := range files {
+					content, err := tools.ReadFileForContext(f)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+						continue
+					}
+					parts = append(parts, content)
+				}
+				if len(parts) > 0 {
+					query = query + "\n\n" + strings.Join(parts, "\n")
+				}
 			}
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -46,4 +63,7 @@ Examples:
 			return nil
 		},
 	}
+
+	c.Flags().StringSliceVar(&files, "file", nil, "Include file contents as context (can repeat)")
+	return c
 }
